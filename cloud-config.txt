@@ -1,0 +1,81 @@
+#cloud-config
+
+# Adding user 'kaggle'
+users:
+  - name: kaggle
+    groups: sudo
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    SSH_AUTHORIZED_KEYS
+
+# Creating nginx config file
+write_files:
+  - path: /etc/nginx/sites-enabled/kaggle
+    content: |
+        server {
+           listen         80;
+           return         301 https://$host$request_uri;
+        }
+
+        server {
+            set $custom_host $host;
+            listen 443 ssl;
+
+            ssl_certificate /etc/nginx/ssl/nginx.crt;
+            ssl_certificate_key /etc/nginx/ssl/nginx.key;
+
+            client_max_body_size 10M;
+
+            location / {
+                proxy_set_header Host $custom_host;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Protocol $scheme;
+
+                auth_basic "Restricted";
+                auth_basic_user_file /etc/nginx/.htpasswd;
+
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_set_header Origin "";
+
+                proxy_pass http://127.0.0.1:8888;
+            }
+        }
+
+# Installing python, nginx and docker
+packages:
+  - build-essential
+  - python3-pip
+  - python3-h5py
+  - python3-tables
+  - python3-pandas
+  - python3-bs4
+  - nginx
+  - docker.io
+  - apache2-utils
+
+# Set up bash script to configure nginx, pull repo, run kaggle data script and create directories
+runcmd:
+  - ipv4=$(curl -s http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address)
+  - mkdir /etc/nginx/ssl
+  - chown -R root:root /etc/nginx/ssl
+  - chmod -R 600 /etc/nginx/ssl
+  - openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/nginx/ssl/nginx.key -out /etc/nginx/ssl/nginx.crt -subj /C=US/ST=NewYork/L=Brooklyn/O=AI/OU=Lab/CN=$ipv4
+  - rm /etc/nginx/sites-enabled/default
+  - htpasswd -b -c /etc/nginx/.htpasswd kaggle test
+  - service nginx start
+  - git clone https://github.com/AppliedArtificialIntelligence/CloudKaggle.git /home/kaggle/start
+  - mv -t /home/kaggle /home/kaggle/start/.bashrc /home/kaggle/start/.bash_profile
+  - mkdir -m 777 /home/kaggle/analysis
+  - mv /home/kaggle/start/kaggle_data.py /home/kaggle/analysis
+  - gpasswd -a root docker
+  - gpasswd -a kaggle docker
+  - service docker start
+  - touch /home/kaggle/analysis/__init__.py
+  - export PYTHONPATH="$PYTHONPATH:/home/kaggle/analysis"
+KAGGLE_CREDENTIALS
+DATA_DOWNLOAD
+  - chown -R kaggle:kaggle /home/kaggle
+  - docker pull appliedai/python-ml:latest
+  - docker run -d -p 8888:8888 -v /home/kaggle/analysis:/home/kaggle/analysis appliedai/python-ml

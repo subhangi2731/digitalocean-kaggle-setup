@@ -1,0 +1,2 @@
+- python3 -c 'from kaggle_data import download_data; download_data()'
+  - gunzip /home/kaggle/analysis/*.gz
